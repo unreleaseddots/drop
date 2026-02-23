@@ -1,0 +1,23 @@
+# ── Nunca commitar ───────────────────────────────────────────────────────────
+segredos.txt
+*.env
+.env*
+secrets.txt
+
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# ── Dados do servidor (nunca devem ir pro repo) ───────────────────────────────
+uploads/
+meta/
+locks/
+run/
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

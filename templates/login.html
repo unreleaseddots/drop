@@ -1,0 +1,246 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DROP — acesso</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b; --surface: #111114; --border: #222228;
+      --accent: #e8ff47; --accent2: #47c6ff;
+      --text: #e4e4e8; --muted: #5a5a68; --danger: #ff4747;
+    }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'Space Mono', monospace; font-size: 14px;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.07) 2px, rgba(0,0,0,.07) 4px);
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px; opacity: .4;
+    }
+    .wrap {
+      position: relative; z-index: 1;
+      min-height: 100vh; display: flex; flex-direction: column;
+      align-items: center; justify-content: center; gap: 2rem; padding: 2rem 1rem;
+    }
+    header { text-align: center; }
+    h1 {
+      font-family: 'Syne', sans-serif; font-size: clamp(3rem, 10vw, 6rem);
+      font-weight: 800; letter-spacing: -.04em; line-height: 1;
+      color: var(--accent); text-shadow: 0 0 60px rgba(232,255,71,.25);
+    }
+    header p { margin-top: .5rem; color: var(--muted); font-size: .7rem; letter-spacing: .15em; text-transform: uppercase; }
+
+    .box {
+      width: 100%; max-width: 380px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 2.5rem 2rem; display: flex; flex-direction: column; gap: 1.25rem;
+      position: relative;
+    }
+    .box::before {
+      content: "// AUTENTICAÇÃO";
+      position: absolute; top: -1px; left: 1.5rem;
+      background: var(--accent); color: #000;
+      font-size: .65rem; font-weight: 700; letter-spacing: .15em; padding: 2px 8px;
+    }
+
+    label { font-size: .7rem; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+
+    .code-input-wrap { display: flex; gap: 0; }
+    .code-input {
+      flex: 1; background: var(--bg); border: 1px solid var(--border);
+      color: var(--accent); font-family: 'Space Mono', monospace;
+      font-size: 1.6rem; font-weight: 700; letter-spacing: .3em;
+      text-align: center; padding: .75rem 1rem; outline: none;
+      transition: border-color .2s;
+    }
+    .code-input:focus { border-color: var(--accent); }
+    .code-input.error { border-color: var(--danger); animation: shake .3s ease; }
+    @keyframes shake {
+      0%,100% { transform: translateX(0); }
+      25% { transform: translateX(-6px); }
+      75% { transform: translateX(6px); }
+    }
+
+    /* timer ring */
+    .timer-wrap {
+      display: flex; align-items: center; gap: .75rem;
+    }
+    .timer-ring { position: relative; width: 36px; height: 36px; flex-shrink: 0; }
+    .timer-ring svg { transform: rotate(-90deg); }
+    .timer-ring circle { fill: none; stroke-width: 3; }
+    .timer-ring .bg { stroke: var(--border); }
+    .timer-ring .fg { stroke: var(--accent); stroke-linecap: round; transition: stroke-dashoffset .5s linear; }
+    .timer-ring .label {
+      position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
+      font-size: .6rem; font-weight: 700; color: var(--accent);
+    }
+    .timer-info { font-size: .7rem; color: var(--muted); line-height: 1.5; }
+    .timer-info strong { color: var(--text); }
+
+    .btn {
+      padding: .85rem; background: var(--accent); color: #000;
+      font-family: 'Syne', sans-serif; font-size: 1rem; font-weight: 800;
+      letter-spacing: .06em; text-transform: uppercase; border: none; cursor: pointer;
+      transition: opacity .2s, box-shadow .2s;
+    }
+    .btn:disabled { opacity: .4; cursor: not-allowed; }
+    .btn:not(:disabled):hover { box-shadow: 0 0 24px rgba(232,255,71,.4); }
+    .btn .spinner {
+      display: none; width: 16px; height: 16px; margin: 0 auto;
+      border: 2px solid rgba(0,0,0,.3); border-top-color: #000;
+      border-radius: 50%; animation: spin .6s linear infinite;
+    }
+    .btn.loading .btn-text { display: none; }
+    .btn.loading .spinner { display: block; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .error-msg {
+      display: none; padding: .75rem 1rem;
+      border: 1px solid var(--danger); background: rgba(255,71,71,.06);
+      color: var(--danger); font-size: .78rem; line-height: 1.5;
+    }
+    .error-msg.show { display: block; }
+
+    footer {
+      position: relative; z-index: 1; text-align: center;
+      color: var(--muted); font-size: .65rem; letter-spacing: .12em; text-transform: uppercase;
+    }
+    footer span { color: var(--accent); }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DROP</h1>
+    <p>acesso restrito</p>
+  </header>
+
+  <div class="box">
+    <label for="codeInput">Código TOTP (6 dígitos)</label>
+
+    <div class="code-input-wrap">
+      <input class="code-input" id="codeInput" type="text"
+             maxlength="6" inputmode="numeric" pattern="[0-9]*"
+             autocomplete="one-time-code" placeholder="000000"/>
+    </div>
+
+    <div class="timer-wrap">
+      <div class="timer-ring">
+        <svg width="36" height="36" viewBox="0 0 36 36">
+          <circle class="bg" cx="18" cy="18" r="15.5"/>
+          <circle class="fg" id="timerArc" cx="18" cy="18" r="15.5"
+                  stroke-dasharray="97.4" stroke-dashoffset="0"/>
+        </svg>
+        <span class="label" id="timerLabel">30</span>
+      </div>
+      <p class="timer-info">
+        Código válido por <strong id="timerSec">30</strong>s.<br>
+        Use o <strong>gerador no seu PC</strong>.
+      </p>
+    </div>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <button class="btn" id="loginBtn">
+      <span class="btn-text">Entrar</span>
+      <div class="spinner"></div>
+    </button>
+  </div>
+
+  <footer><span>DROP</span> — acesso por código temporário</footer>
+</div>
+
+<script>
+  const codeInput = document.getElementById("codeInput");
+  const loginBtn  = document.getElementById("loginBtn");
+  const errorMsg  = document.getElementById("errorMsg");
+  const timerArc  = document.getElementById("timerArc");
+  const timerLabel= document.getElementById("timerLabel");
+  const timerSec  = document.getElementById("timerSec");
+  const CIRC = 97.4;
+
+  // ── Timer TOTP ────────────────────────────────────────────────────────────
+  function updateTimer() {
+    const now = Math.floor(Date.now() / 1000);
+    const remaining = 30 - (now % 30);
+    const offset = CIRC * (1 - remaining / 30);
+    timerArc.style.strokeDashoffset = offset;
+    timerLabel.textContent = remaining;
+    timerSec.textContent   = remaining;
+    // pisca quando está perto do fim
+    timerArc.style.stroke = remaining <= 5 ? "#ff4747" : "var(--accent)";
+  }
+  updateTimer();
+  setInterval(updateTimer, 500);
+
+  // ── Input — só números ────────────────────────────────────────────────────
+  codeInput.addEventListener("input", () => {
+    codeInput.value = codeInput.value.replace(/\D/g, "").slice(0, 6);
+    codeInput.classList.remove("error");
+    errorMsg.classList.remove("show");
+  });
+
+  codeInput.addEventListener("keydown", e => {
+    if (e.key === "Enter") doLogin();
+  });
+
+  // foca automaticamente
+  codeInput.focus();
+
+  // ── Login ─────────────────────────────────────────────────────────────────
+  async function doLogin() {
+    const code = codeInput.value.trim();
+    if (code.length !== 6) {
+      shake(); showError("Digite os 6 dígitos completos.");
+      return;
+    }
+    loginBtn.classList.add("loading");
+    loginBtn.disabled = true;
+
+    try {
+      const res = await fetch("/auth", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ code }),
+      });
+      const data = await res.json();
+
+      if (res.ok && data.ok) {
+        window.location.href = "/";
+      } else {
+        shake();
+        showError(data.error || "Código incorreto.");
+        codeInput.value = "";
+        codeInput.focus();
+      }
+    } catch {
+      showError("Falha de conexão.");
+    } finally {
+      loginBtn.classList.remove("loading");
+      loginBtn.disabled = false;
+    }
+  }
+
+  loginBtn.addEventListener("click", doLogin);
+
+  function showError(msg) {
+    errorMsg.textContent = "⚠ " + msg;
+    errorMsg.classList.add("show");
+  }
+  function shake() {
+    codeInput.classList.remove("error");
+    void codeInput.offsetWidth; // reflow
+    codeInput.classList.add("error");
+  }
+</script>
+</body>
+</html>

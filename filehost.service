@@ -1,0 +1,47 @@
+# /etc/systemd/system/filehost.service
+# Preencha os valores de Environment antes de usar.
+# Execute setup.py para gerar os segredos automaticamente.
+
+[Unit]
+Description=DROP – upload anônimo com TOTP
+After=network.target
+
+[Service]
+User=filehost
+Group=filehost
+WorkingDirectory=/opt/filehost/app
+
+# ── Segredos — preencha com os valores gerados pelo setup.py ─────────────────
+Environment="TOTP_SECRET=COLE_AQUI"
+Environment="JWT_SECRET=COLE_AQUI"
+Environment="CLEANUP_TOKEN=COLE_AQUI"
+
+# ── Pastas ────────────────────────────────────────────────────────────────────
+Environment="UPLOAD_FOLDER=/opt/filehost/uploads"
+Environment="META_FOLDER=/opt/filehost/meta"
+Environment="LOCK_FOLDER=/opt/filehost/locks"
+
+# ── Sessão: dias antes de pedir código TOTP novamente ────────────────────────
+Environment="SESSION_DAYS=7"
+
+# ── Fix gunicorn worker tmp ───────────────────────────────────────────────────
+Environment="GUNICORN_CMD_ARGS=--worker-tmp-dir /opt/filehost/run"
+
+ExecStart=/opt/filehost/venv/bin/gunicorn \
+    --workers 2 \
+    --bind 127.0.0.1:5000 \
+    --timeout 600 \
+    --keep-alive 5 \
+    app:app
+
+Restart=always
+RestartSec=5
+
+# ── Hardening ─────────────────────────────────────────────────────────────────
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ReadWritePaths=/opt/filehost/uploads /opt/filehost/meta /opt/filehost/locks /opt/filehost/run
+
+[Install]
+WantedBy=multi-user.target

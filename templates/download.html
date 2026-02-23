@@ -1,0 +1,171 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DROP — {{ name }}</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0a0a0b; --surface: #111114; --border: #222228;
+      --accent: #e8ff47; --accent2: #47c6ff;
+      --text: #e4e4e8; --muted: #5a5a68; --danger: #ff4747;
+    }
+    html, body {
+      height: 100%; background: var(--bg); color: var(--text);
+      font-family: 'Space Mono', monospace; font-size: 14px;
+    }
+    body::before {
+      content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none;
+      background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.07) 2px, rgba(0,0,0,.07) 4px);
+    }
+    body::after {
+      content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none;
+      background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px);
+      background-size: 40px 40px; opacity: .4;
+    }
+    .wrap {
+      position: relative; z-index: 1; min-height: 100vh;
+      display: flex; flex-direction: column;
+      align-items: center; justify-content: center;
+      padding: 2rem 1rem; gap: 2rem;
+    }
+    header { text-align: center; }
+    h1 {
+      font-family: 'Syne', sans-serif; font-size: clamp(2.5rem, 8vw, 5rem);
+      font-weight: 800; letter-spacing: -.04em; line-height: 1;
+      color: var(--accent); text-shadow: 0 0 60px rgba(232,255,71,.25);
+    }
+    header p { margin-top: .5rem; color: var(--muted); font-size: .7rem; letter-spacing: .15em; text-transform: uppercase; }
+
+    .card {
+      width: 100%; max-width: 480px;
+      background: var(--surface); border: 1px solid var(--border);
+      padding: 2.5rem 2rem; display: flex; flex-direction: column; gap: 1.5rem;
+      position: relative; animation: fadeUp .3s ease;
+    }
+    .card::before {
+      content: "// ARQUIVO";
+      position: absolute; top: -1px; left: 1.5rem;
+      background: var(--accent2); color: #000;
+      font-size: .65rem; font-weight: 700; letter-spacing: .15em; padding: 2px 8px;
+    }
+    @keyframes fadeUp { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+
+    /* ícone do arquivo */
+    .file-icon {
+      font-size: 3.5rem; text-align: center; 
+      filter: drop-shadow(0 0 20px rgba(71,198,255,.3));
+    }
+
+    /* nome do arquivo */
+    .file-name {
+      font-size: 1rem; font-weight: 700; color: var(--accent2);
+      word-break: break-all; text-align: center; line-height: 1.4;
+    }
+
+    /* metadados */
+    .meta-grid {
+      display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 1rem;
+      border: 1px solid var(--border); padding: 1rem;
+    }
+    .meta-item { display: flex; flex-direction: column; gap: 4px; align-items: center; text-align: center; }
+    .meta-label { font-size: .6rem; color: var(--muted); letter-spacing: .12em; text-transform: uppercase; }
+    .meta-value { font-size: .85rem; color: var(--text); font-weight: 700; }
+
+    /* barra de expiração */
+    .expire-wrap { display: flex; flex-direction: column; gap: .5rem; }
+    .expire-label { display: flex; justify-content: space-between; font-size: .7rem; color: var(--muted); }
+    .expire-label span { color: var(--accent); }
+    .expire-bar-bg { height: 3px; background: var(--border); }
+    .expire-bar-fill { height: 100%; background: var(--accent); transition: width .5s; box-shadow: 0 0 8px rgba(232,255,71,.5); }
+
+    /* botão download */
+    .dl-btn {
+      display: flex; align-items: center; justify-content: center; gap: .75rem;
+      padding: 1rem 1.5rem;
+      background: var(--accent); color: #000;
+      font-family: 'Syne', sans-serif; font-size: 1.1rem; font-weight: 800;
+      letter-spacing: .06em; text-transform: uppercase;
+      border: none; cursor: pointer; text-decoration: none;
+      transition: box-shadow .2s, transform .1s;
+      position: relative; overflow: hidden;
+    }
+    .dl-btn:hover {
+      box-shadow: 0 0 32px rgba(232,255,71,.5);
+      transform: translateY(-1px);
+    }
+    .dl-btn:active { transform: translateY(0); }
+    .dl-icon { font-size: 1.2rem; }
+
+    /* aviso */
+    .warn {
+      font-size: .68rem; color: var(--muted);
+      border-left: 2px solid var(--border);
+      padding-left: .75rem; line-height: 1.7;
+    }
+    .warn strong { color: var(--accent); }
+
+    footer {
+      position: relative; z-index: 1; text-align: center;
+      color: var(--muted); font-size: .65rem; letter-spacing: .12em;
+      text-transform: uppercase; padding-bottom: 1.5rem;
+    }
+    footer a { color: var(--accent); text-decoration: none; }
+    footer a:hover { text-decoration: underline; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DROP</h1>
+    <p>link de download</p>
+  </header>
+
+  <div class="card">
+    <div class="file-icon">{{ icon }}</div>
+    <div class="file-name">{{ name }}</div>
+
+    <div class="meta-grid">
+      <div class="meta-item">
+        <span class="meta-label">Tamanho</span>
+        <span class="meta-value">{{ size }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Downloads</span>
+        <span class="meta-value">{{ downloads }}</span>
+      </div>
+      <div class="meta-item">
+        <span class="meta-label">Expira em</span>
+        <span class="meta-value">{{ expires_in }}</span>
+      </div>
+    </div>
+
+    <div class="expire-wrap">
+      <div class="expire-label">
+        <span>Tempo restante</span>
+        <span>{{ expires_in }}</span>
+      </div>
+      <div class="expire-bar-bg">
+        <div class="expire-bar-fill" style="width: {{ expire_pct }}%"></div>
+      </div>
+    </div>
+
+    <a class="dl-btn" href="/download/{{ file_id }}">
+      <span class="dl-icon">⬇</span>
+      Baixar arquivo
+    </a>
+
+    <p class="warn">
+      <strong>⚠</strong> Este arquivo expira em <strong>{{ expires_in }}</strong> e será deletado permanentemente. Nenhum dado pessoal foi coletado para gerar este link.
+    </p>
+  </div>
+
+  <footer>
+    <a href="/">DROP</a> — envio anônimo de arquivos
+  </footer>
+</div>
+</body>
+</html>

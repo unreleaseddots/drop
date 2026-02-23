@@ -1,0 +1,6 @@
+flask>=3.0
+flask-limiter>=3.5
+werkzeug>=3.0
+gunicorn>=22.0
+pyotp>=2.9
+PyJWT>=2.8
