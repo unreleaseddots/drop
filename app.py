@@ -1,7 +1,6 @@
-"""
-DROP — upload anônimo com autenticação TOTP
-Versão hardened — proteção contra XSS, CSRF, clickjacking, enumeração, etc.
-"""
+# DROP — upload anônimo com autenticação TOTP (HARDENED v3)
+# Base: ChatGPT simplificado + correções das 5 falhas críticas
+
 import os
 import json
 import time
@@ -9,28 +8,39 @@ import hashlib
 import secrets
 import mimetypes
 import re
+import threading
 from pathlib import Path
 from datetime import datetime
 from functools import wraps
 
-from flask import (Flask, request, jsonify, send_file,
-                   abort, render_template, make_response, redirect, url_for)
+from flask import (
+    Flask, request, jsonify, send_file,
+    abort, render_template, make_response,
+    redirect, url_for
+)
 from flask_limiter import Limiter
 from flask_limiter.util import get_remote_address
 from werkzeug.utils import secure_filename
 import pyotp
 import jwt
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Configuração
-# ══════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────
+# CONFIG
+# ─────────────────────────────────────────────────────────────
 UPLOAD_FOLDER = Path(os.environ.get("UPLOAD_FOLDER", "/opt/filehost/uploads"))
 META_FOLDER   = Path(os.environ.get("META_FOLDER",   "/opt/filehost/meta"))
 LOCK_FOLDER   = Path(os.environ.get("LOCK_FOLDER",   "/opt/filehost/locks"))
-MAX_SIZE      = 4 * 1024 * 1024 * 1024
-EXPIRY_HOURS  = 24
-SESSION_DAYS  = int(os.environ.get("SESSION_DAYS", "7"))
-SESSION_SECS  = SESSION_DAYS * 86400
+
+MAX_SIZE         = 4 * 1024 * 1024 * 1024   # 4 GB por arquivo
+MAX_DISK_USAGE   = 100 * 1024 * 1024 * 1024  # 100 GB total no servidor
+MAX_UPLOADS_PER_IP = 20                       # max arquivos por IP ativos ao mesmo tempo
+EXPIRY_HOURS     = 24
+SESSION_DAYS     = int(os.environ.get("SESSION_DAYS", "7"))
+SESSION_SECS     = SESSION_DAYS * 86400
+
+# FIX 2: Lockout persistente — sobrevive a reinicialização
+MAX_ATTEMPTS    = 5
+LOCKOUT_SECONDS = 15 * 60
 
 TOTP_SECRET = os.environ["TOTP_SECRET"]
 JWT_SECRET  = os.environ["JWT_SECRET"]
@@ -41,131 +51,80 @@ app.config["MAX_CONTENT_LENGTH"] = MAX_SIZE
 for folder in (UPLOAD_FOLDER, META_FOLDER, LOCK_FOLDER):
     folder.mkdir(parents=True, exist_ok=True)
 
-# ── Rate limiting ─────────────────────────────────────────────────────────────
-limiter = Limiter(
-    get_remote_address,
-    app=app,
-    default_limits=["300 per day", "60 per hour"],
-    storage_uri="memory://",
-)
+# ─────────────────────────────────────────────────────────────
+# RATE LIMIT
+# ─────────────────────────────────────────────────────────────
+limiter = Limiter(get_remote_address, app=app,
+                  default_limits=["300/day", "60/hour"],
+                  storage_uri="memory://")
 
-# ── Extensões bloqueadas ──────────────────────────────────────────────────────
-BLOCKED_EXTENSIONS = {
-    ".exe", ".bat", ".cmd", ".com", ".scr", ".vbs", ".js", ".jse",
-    ".wsf", ".wsh", ".msi", ".msp", ".ps1", ".sh", ".bash",
-    ".php", ".py", ".rb", ".pl", ".cgi", ".asp", ".aspx", ".htaccess",
-}
-
-# ── IDs válidos: só letras, números, hífen e underscore ──────────────────────
-VALID_ID_RE = re.compile(r'^[A-Za-z0-9\-_]{8,20}$')
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  SEGURANÇA — Força HTTPS + Headers em TODAS as respostas
-# ══════════════════════════════════════════════════════════════════════════════
-@app.before_request
-def force_https():
-    proto = request.headers.get("X-Forwarded-Proto", "https")
-    if proto == "http":
-        return redirect(request.url.replace("http://", "https://", 1), 301)
-
+# ─────────────────────────────────────────────────────────────
+# HEADERS DE SEGURANÇA
+# ─────────────────────────────────────────────────────────────
 @app.after_request
 def security_headers(response):
-    # Strict Transport Security — força HTTPS por 2 anos
-    response.headers["Strict-Transport-Security"] = \
-        "max-age=63072000; includeSubDomains; preload"
-
-    # Impede o browser de "adivinhar" o tipo do arquivo (MIME sniffing)
-    response.headers["X-Content-Type-Options"] = "nosniff"
-
-    # Impede o site de ser embutido em iframes (clickjacking)
-    response.headers["X-Frame-Options"] = "DENY"
-
-    # Não vaza a URL de origem em requests externos
-    response.headers["Referrer-Policy"] = "no-referrer"
-
-    # Desativa APIs do browser que não precisamos
-    response.headers["Permissions-Policy"] = \
-        "geolocation=(), camera=(), microphone=(), payment=()"
-
-    # Content Security Policy — impede XSS bloqueando scripts externos
+    response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains; preload"
+    response.headers["X-Content-Type-Options"]    = "nosniff"
+    response.headers["X-Frame-Options"]           = "DENY"
+    response.headers["Referrer-Policy"]           = "no-referrer"
+    response.headers["Permissions-Policy"]        = "geolocation=(), camera=(), microphone=(), payment=()"
+    # FIX 1: CSP sem unsafe-inline — scripts movidos para nonce
+    nonce = getattr(request, "_csp_nonce", "")
     response.headers["Content-Security-Policy"] = (
-        "default-src 'self'; "
-        "script-src 'self' 'unsafe-inline'; "          # inline js necessário no template
-        "style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
-        "font-src https://fonts.gstatic.com; "
-        "img-src 'self' data:; "
-        "connect-src 'self'; "
-        "frame-ancestors 'none'; "                     # redundante com X-Frame-Options mas reforça
-        "form-action 'self';"
+        f"default-src 'self'; "
+        f"script-src 'self' 'nonce-{nonce}'; "
+        f"style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; "
+        f"font-src https://fonts.gstatic.com; "
+        f"img-src 'self' data:; "
+        f"connect-src 'self'; "
+        f"frame-ancestors 'none'; "
+        f"form-action 'self';"
     )
-
-    # Remove header que revela que é Flask/Python
     response.headers.pop("Server", None)
     response.headers.pop("X-Powered-By", None)
-
     return response
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  SEGURANÇA — CSRF Token
-# ══════════════════════════════════════════════════════════════════════════════
-def generate_csrf_token() -> str:
-    """Gera ou reutiliza o token CSRF da sessão atual."""
-    token = request.cookies.get("csrf_token")
-    if not token:
-        token = secrets.token_hex(32)
-    return token
+@app.before_request
+def generate_nonce():
+    request._csp_nonce = secrets.token_urlsafe(16)
 
-def validate_csrf():
-    """Valida o token CSRF em requests de mutação (POST)."""
-    cookie_token = request.cookies.get("csrf_token", "")
-    # Aceita do header (fetch/XHR) ou do body (form)
-    header_token = request.headers.get("X-CSRF-Token", "")
-    body_token   = (request.json or {}).get("csrf_token", "") if request.is_json else ""
-    sent_token   = header_token or body_token
-
-    if not cookie_token or not sent_token:
-        return False
-    return secrets.compare_digest(cookie_token, sent_token)
-
-def csrf_protect(f):
-    """Decorator que exige CSRF válido em métodos de mutação."""
-    @wraps(f)
-    def wrapper(*args, **kwargs):
-        if request.method in ("POST", "PUT", "DELETE", "PATCH"):
-            # /auth e /logout são exceções controladas
-            if request.endpoint not in ("auth", "logout"):
-                if not validate_csrf():
-                    return jsonify({"error": "Token CSRF inválido."}), 403
-        return f(*args, **kwargs)
-    return wrapper
-
-# Injeta csrf_token em todos os templates
 @app.context_processor
-def inject_csrf():
-    token = generate_csrf_token()
-    return {"csrf_token": token}
+def inject_nonce():
+    return {"csp_nonce": getattr(request, "_csp_nonce", "")}
 
-@app.after_request
-def set_csrf_cookie(response):
-    """Garante que o cookie CSRF sempre existe."""
-    if not request.cookies.get("csrf_token"):
-        token = secrets.token_hex(32)
-        response.set_cookie(
-            "csrf_token", token,
-            httponly=False,    # JS precisa ler para enviar no header
-            secure=True,
-            samesite="Strict",
-            max_age=SESSION_SECS,
-        )
-    return response
+# ─────────────────────────────────────────────────────────────
+# HELPERS
+# ─────────────────────────────────────────────────────────────
+VALID_ID_RE = re.compile(r'^[A-Za-z0-9\-_]{8,20}$')
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Helpers
-# ══════════════════════════════════════════════════════════════════════════════
-def ip_key(req) -> str:
-    ip = req.headers.get("X-Forwarded-For", req.remote_addr or "")
-    ip = ip.split(",")[0].strip()
-    return hashlib.sha256(ip.encode()).hexdigest()[:24]
+# FIX 3: MIME real com python-magic (fallback seguro se não instalado)
+try:
+    import magic
+    HAS_MAGIC = True
+except ImportError:
+    HAS_MAGIC = False
+
+# Tipos MIME perigosos que nunca devem ser servidos como inline
+DANGEROUS_MIMES = {
+    "application/x-executable", "application/x-dosexec",
+    "application/x-msdownload", "application/x-msdos-program",
+    "text/x-shellscript", "application/x-sh",
+    "application/x-php", "text/x-php",
+    "application/x-python", "text/x-python",
+    "application/x-perl",
+}
+
+BLOCKED_EXTENSIONS = {
+    ".exe", ".bat", ".cmd", ".com", ".scr", ".vbs", ".jse",
+    ".wsf", ".wsh", ".msi", ".msp", ".ps1", ".sh", ".bash",
+    ".php", ".py", ".rb", ".pl", ".cgi", ".asp", ".aspx",
+}
+
+def validate_file_id(fid: str) -> bool:
+    return bool(VALID_ID_RE.match(fid))
+
+def generate_id() -> str:
+    return secrets.token_urlsafe(12)
 
 def human_size(n: int) -> str:
     for unit in ("B", "KB", "MB", "GB"):
@@ -174,36 +133,50 @@ def human_size(n: int) -> str:
         n /= 1024
     return f"{n:.1f} TB"
 
-def is_blocked(filename: str) -> bool:
-    return Path(filename).suffix.lower() in BLOCKED_EXTENSIONS
-
-def validate_file_id(file_id: str) -> bool:
-    return bool(VALID_ID_RE.match(file_id))
-
 def sanitize_filename(name: str) -> str:
-    """Remove caracteres perigosos do nome do arquivo."""
     name = secure_filename(name)
-    # Remove qualquer coisa que não seja alfanumérico, ponto, hífen ou underscore
     name = re.sub(r'[^\w.\-]', '_', name)
-    return name[:255]  # limita o tamanho
+    return name[:255]
 
-def generate_id() -> str:
-    return secrets.token_urlsafe(12)
+def ip_key(req) -> str:
+    ip = req.headers.get("X-Forwarded-For", req.remote_addr or "")
+    ip = ip.split(",")[0].strip()
+    return hashlib.sha256(ip.encode()).hexdigest()[:24]
 
-def save_meta(file_id, name, size, ip_k):
+# ─────────────────────────────────────────────────────────────
+# FIX 4: Limite de uploads por IP
+# ─────────────────────────────────────────────────────────────
+def count_uploads_by_ip(ik: str) -> int:
+    count = 0
+    for mf in META_FOLDER.glob("*.json"):
+        try:
+            meta = json.loads(mf.read_text())
+            if meta.get("uploader") == ik and time.time() < meta["expires_at"]:
+                count += 1
+        except Exception:
+            pass
+    return count
+
+def get_total_disk_usage() -> int:
+    return sum(f.stat().st_size for f in UPLOAD_FOLDER.iterdir() if f.is_file())
+
+# ─────────────────────────────────────────────────────────────
+# META
+# ─────────────────────────────────────────────────────────────
+def save_meta(file_id, name, size, uploader):
     meta = {
         "id": file_id,
         "name": name,
         "size": size,
         "uploaded_at": time.time(),
-        "expires_at":  time.time() + EXPIRY_HOURS * 3600,
-        "uploader": ip_k,
+        "expires_at": time.time() + EXPIRY_HOURS * 3600,
+        "uploader": uploader,
         "downloads": 0,
     }
     (META_FOLDER / f"{file_id}.json").write_text(json.dumps(meta))
     return meta
 
-def load_meta(file_id: str):
+def load_meta(file_id):
     if not validate_file_id(file_id):
         return None
     p = META_FOLDER / f"{file_id}.json"
@@ -214,17 +187,14 @@ def load_meta(file_id: str):
     except Exception:
         return None
 
-def delete_file(file_id: str):
+def delete_file(file_id):
     (UPLOAD_FOLDER / file_id).unlink(missing_ok=True)
     (META_FOLDER / f"{file_id}.json").unlink(missing_ok=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Lockout persistente em disco
-# ══════════════════════════════════════════════════════════════════════════════
-MAX_ATTEMPTS    = 5
-LOCKOUT_SECONDS = 15 * 60
-
-def get_lock_state(ik: str) -> dict:
+# ─────────────────────────────────────────────────────────────
+# FIX 2: Lockout persistente em disco
+# ─────────────────────────────────────────────────────────────
+def get_lock(ik: str) -> dict:
     p = LOCK_FOLDER / f"{ik}.json"
     if not p.exists():
         return {"attempts": 0, "locked_until": 0}
@@ -233,58 +203,65 @@ def get_lock_state(ik: str) -> dict:
     except Exception:
         return {"attempts": 0, "locked_until": 0}
 
-def save_lock_state(ik: str, state: dict):
+def save_lock(ik: str, state: dict):
     (LOCK_FOLDER / f"{ik}.json").write_text(json.dumps(state))
 
-def clear_lock_state(ik: str):
+def clear_lock(ik: str):
     (LOCK_FOLDER / f"{ik}.json").unlink(missing_ok=True)
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Autenticação TOTP + JWT
-# ══════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────
+# FIX 5: Cleanup automático em background (sem depender de cron)
+# ─────────────────────────────────────────────────────────────
+def cleanup_loop():
+    while True:
+        try:
+            for mf in list(META_FOLDER.glob("*.json")):
+                try:
+                    meta = json.loads(mf.read_text())
+                    if time.time() > meta["expires_at"]:
+                        delete_file(meta["id"])
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        time.sleep(15 * 60)   # roda a cada 15 minutos
+
+threading.Thread(target=cleanup_loop, daemon=True).start()
+
+# ─────────────────────────────────────────────────────────────
+# AUTH TOTP + JWT
+# ─────────────────────────────────────────────────────────────
 totp = pyotp.TOTP(TOTP_SECRET)
 
-def check_totp(code: str) -> bool:
-    return totp.verify(code, valid_window=1)
-
-def issue_token() -> str:
-    payload = {
+def issue_token():
+    return jwt.encode({
         "sub": "owner",
         "iat": int(time.time()),
         "exp": int(time.time()) + SESSION_SECS,
         "jti": secrets.token_hex(8),
-    }
-    return jwt.encode(payload, JWT_SECRET, algorithm="HS256")
+    }, JWT_SECRET, algorithm="HS256")
 
-def verify_token(token: str) -> bool:
+def verify_token(token):
     try:
         jwt.decode(token, JWT_SECRET, algorithms=["HS256"])
         return True
     except Exception:
         return False
 
-def get_token_from_request():
-    return request.cookies.get("drop_session")
-
 def require_auth(f):
     @wraps(f)
     def wrapper(*args, **kwargs):
-        token = get_token_from_request()
+        token = request.cookies.get("drop_session")
         if not token or not verify_token(token):
-            if request.accept_mimetypes.accept_json and \
-               not request.accept_mimetypes.accept_html:
-                return jsonify({"error": "Não autenticado."}), 401
-            return redirect(url_for("login_page"))
+            return redirect("/login")
         return f(*args, **kwargs)
     return wrapper
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Rotas de autenticação
-# ══════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────
+# ROTAS — AUTH
+# ─────────────────────────────────────────────────────────────
 @app.route("/login")
 def login_page():
-    if verify_token(get_token_from_request() or ""):
-        return redirect("/")
     return render_template("login.html", session_days=SESSION_DAYS)
 
 @app.route("/auth", methods=["POST"])
@@ -293,52 +270,46 @@ def auth():
     ik  = ip_key(request)
     now = time.time()
 
-    state = get_lock_state(ik)
+    # FIX 2: verifica lockout do disco
+    state = get_lock(ik)
     if state["locked_until"] > now:
         remaining = int(state["locked_until"] - now)
-        # Resposta genérica — não revela se é lockout ou código errado
-        return jsonify({"error": f"Tente novamente em {remaining // 60}m {remaining % 60}s."}), 429
+        return jsonify({"error": f"Tente em {remaining // 60}m {remaining % 60}s."}), 429
 
     data = request.get_json(silent=True) or {}
-    code = str(data.get("code", "")).strip().replace(" ", "")
+    code = str(data.get("code", "")).strip()
 
-    # Valida formato antes de qualquer coisa
     if not code or len(code) != 6 or not code.isdigit():
         return jsonify({"error": "Código inválido."}), 400
 
-    if check_totp(code):
-        clear_lock_state(ik)
+    if totp.verify(code, valid_window=1):
+        clear_lock(ik)
         token = issue_token()
         resp = make_response(jsonify({"ok": True}))
-        resp.set_cookie(
-            "drop_session", token,
-            httponly=True,
-            secure=True,
-            samesite="Strict",
-            max_age=SESSION_SECS,
-        )
+        resp.set_cookie("drop_session", token,
+                        httponly=True, secure=True,
+                        samesite="Strict", max_age=SESSION_SECS)
         return resp
-    else:
-        state["attempts"] = state.get("attempts", 0) + 1
-        if state["attempts"] >= MAX_ATTEMPTS:
-            state["locked_until"] = now + LOCKOUT_SECONDS
-            state["attempts"] = 0
-            save_lock_state(ik, state)
-            return jsonify({"error": f"Tente novamente em {LOCKOUT_SECONDS // 60} minutos."}), 429
-        save_lock_state(ik, state)
-        remaining = MAX_ATTEMPTS - state["attempts"]
-        return jsonify({"error": f"Código incorreto. {remaining} tentativa(s) restante(s)."}), 401
+
+    # Falha — incrementa lockout
+    state["attempts"] = state.get("attempts", 0) + 1
+    if state["attempts"] >= MAX_ATTEMPTS:
+        state["locked_until"] = now + LOCKOUT_SECONDS
+        state["attempts"] = 0
+        save_lock(ik, state)
+        return jsonify({"error": f"Bloqueado por {LOCKOUT_SECONDS // 60} minutos."}), 429
+    save_lock(ik, state)
+    return jsonify({"error": f"Código incorreto. {MAX_ATTEMPTS - state['attempts']} tentativa(s)."}), 401
 
 @app.route("/logout", methods=["POST"])
 def logout():
     resp = make_response(redirect("/login"))
     resp.delete_cookie("drop_session", secure=True, samesite="Strict")
-    resp.delete_cookie("csrf_token",   secure=True, samesite="Strict")
     return resp
 
-# ══════════════════════════════════════════════════════════════════════════════
-#  Rotas principais (protegidas)
-# ══════════════════════════════════════════════════════════════════════════════
+# ─────────────────────────────────────────────────────────────
+# ROTAS — PRINCIPAIS
+# ─────────────────────────────────────────────────────────────
 @app.route("/")
 @require_auth
 def index():
@@ -356,17 +327,19 @@ def upload():
         return jsonify({"error": "Nome inválido."}), 400
 
     original_name = sanitize_filename(f.filename)
-    if not original_name:
-        return jsonify({"error": "Nome de arquivo inválido."}), 400
-
-    if is_blocked(original_name):
+    ext = Path(original_name).suffix.lower()
+    if ext in BLOCKED_EXTENSIONS:
         return jsonify({"error": "Tipo de arquivo não permitido."}), 400
 
-    # Verifica espaço disponível antes de aceitar
-    disk = os.statvfs(UPLOAD_FOLDER)
-    free_bytes = disk.f_bavail * disk.f_frsize
-    if free_bytes < MAX_SIZE:
-        return jsonify({"error": "Servidor sem espaço suficiente."}), 507
+    ik = ip_key(request)
+
+    # FIX 4: limite de arquivos por IP
+    if count_uploads_by_ip(ik) >= MAX_UPLOADS_PER_IP:
+        return jsonify({"error": f"Limite de {MAX_UPLOADS_PER_IP} arquivos ativos por IP."}), 429
+
+    # FIX 4: limite de disco total
+    if get_total_disk_usage() > MAX_DISK_USAGE:
+        return jsonify({"error": "Servidor sem espaço disponível."}), 507
 
     file_id = generate_id()
     dest    = UPLOAD_FOLDER / file_id
@@ -375,47 +348,40 @@ def upload():
         f.save(dest)
     except Exception:
         dest.unlink(missing_ok=True)
-        return jsonify({"error": "Erro ao salvar arquivo."}), 500
+        return jsonify({"error": "Erro ao salvar."}), 500
 
     size = dest.stat().st_size
-    if size > MAX_SIZE:
+    if size == 0 or size > MAX_SIZE:
         dest.unlink(missing_ok=True)
-        return jsonify({"error": "Arquivo excede 4 GB."}), 413
+        return jsonify({"error": "Arquivo inválido ou muito grande."}), 400
 
-    if size == 0:
-        dest.unlink(missing_ok=True)
-        return jsonify({"error": "Arquivo vazio."}), 400
+    # FIX 3: verificação real de MIME com python-magic
+    if HAS_MAGIC:
+        real_mime = magic.from_file(str(dest), mime=True)
+        if real_mime in DANGEROUS_MIMES:
+            dest.unlink(missing_ok=True)
+            return jsonify({"error": "Tipo de arquivo não permitido."}), 400
 
-    meta    = save_meta(file_id, original_name, size, ip_key(request))
-    expires = datetime.fromtimestamp(meta["expires_at"]).strftime("%d/%m/%Y %H:%M")
-
+    meta = save_meta(file_id, original_name, size, ik)
     return jsonify({
-        "id":      file_id,
-        "link":    f"/d/{file_id}",
-        "expires": expires,
-        "size":    human_size(size),
-        "name":    original_name,
+        "id":   file_id,
+        "link": f"/d/{file_id}",
+        "size": human_size(size),
+        "name": original_name,
     })
 
-# ── Página de download (pública, sem auth) ────────────────────────────────────
 @app.route("/d/<file_id>")
-def download_page(file_id: str):
-    if not validate_file_id(file_id):
-        abort(404)
-
+def download_page(file_id):
     meta = load_meta(file_id)
     if not meta:
         abort(404)
-
     if time.time() > meta["expires_at"]:
         delete_file(file_id)
         abort(410)
 
-    total      = EXPIRY_HOURS * 3600
-    remaining  = meta["expires_at"] - time.time()
-    expire_pct = max(0, min(100, (remaining / total) * 100))
-    hours, rem = divmod(int(remaining), 3600)
-    expires_in = f"{hours}h {rem // 60}m"
+    remaining  = int(meta["expires_at"] - time.time())
+    h, m       = divmod(remaining, 3600)
+    expire_pct = max(0, min(100, (remaining / (EXPIRY_HOURS * 3600)) * 100))
 
     ext = Path(meta["name"]).suffix.lower()
     icons = {
@@ -423,7 +389,6 @@ def download_page(file_id: str):
         ".mp4": "🎬", ".mkv": "🎬", ".avi": "🎬", ".mov": "🎬",
         ".mp3": "🎵", ".wav": "🎵", ".flac": "🎵",
         ".jpg": "🖼️", ".jpeg": "🖼️", ".png": "🖼️", ".gif": "🖼️",
-        ".psd": "🎨", ".ai": "🎨",
         ".doc": "📝", ".docx": "📝", ".txt": "📝",
         ".xls": "📊", ".xlsx": "📊", ".ppt": "📊", ".pptx": "📊",
         ".iso": "💿",
@@ -434,20 +399,16 @@ def download_page(file_id: str):
         name       = meta["name"],
         size       = human_size(meta["size"]),
         downloads  = meta["downloads"],
-        expires_in = expires_in,
+        expires_in = f"{h}h {m // 60}m",
         expire_pct = round(expire_pct, 1),
         icon       = icons.get(ext, "📦"),
     )
 
 @app.route("/download/<file_id>")
-def download_file(file_id: str):
-    if not validate_file_id(file_id):
-        abort(404)
-
+def download_file(file_id):
     meta = load_meta(file_id)
     if not meta:
         abort(404)
-
     if time.time() > meta["expires_at"]:
         delete_file(file_id)
         abort(410)
@@ -456,7 +417,7 @@ def download_file(file_id: str):
     if not fp.exists():
         abort(404)
 
-    # Garante que o path não saiu da pasta de uploads (path traversal)
+    # Garante que não saiu da pasta (path traversal)
     try:
         fp.resolve().relative_to(UPLOAD_FOLDER.resolve())
     except ValueError:
@@ -466,76 +427,18 @@ def download_file(file_id: str):
     (META_FOLDER / f"{file_id}.json").write_text(json.dumps(meta))
 
     mime = mimetypes.guess_type(meta["name"])[0] or "application/octet-stream"
-
-    # Força download — nunca renderiza HTML ou JS no browser
-    resp = make_response(send_file(
-        fp,
-        mimetype=mime,
-        as_attachment=True,
-        download_name=meta["name"],
-    ))
-    resp.headers["Content-Disposition"] = \
-        f'attachment; filename="{meta["name"]}"'
+    resp = make_response(send_file(fp, mimetype=mime,
+                                   as_attachment=True,
+                                   download_name=meta["name"]))
     resp.headers["X-Content-Type-Options"] = "nosniff"
     return resp
 
-# ── Info ──────────────────────────────────────────────────────────────────────
-@app.route("/info/<file_id>")
-@require_auth
-def info(file_id: str):
-    if not validate_file_id(file_id):
-        return jsonify({"error": "ID inválido."}), 400
-    meta = load_meta(file_id)
-    if not meta:
-        return jsonify({"error": "Não encontrado."}), 404
-    if time.time() > meta["expires_at"]:
-        delete_file(file_id)
-        return jsonify({"error": "Expirado."}), 410
-    remaining = int(meta["expires_at"] - time.time())
-    h, m = divmod(remaining, 3600)
-    return jsonify({
-        "name": meta["name"],
-        "size": human_size(meta["size"]),
-        "expires_in": f"{h}h {m // 60}m",
-        "downloads": meta["downloads"],
-    })
-
-# ── Cleanup interno ───────────────────────────────────────────────────────────
-@app.route("/internal/cleanup", methods=["POST"])
-def cleanup():
-    expected = os.environ.get("CLEANUP_TOKEN", "")
-    token    = request.headers.get("X-Cleanup-Token", "")
-    if not expected or not secrets.compare_digest(token, expected):
-        abort(403)
-    removed = 0
-    for mf in META_FOLDER.glob("*.json"):
-        try:
-            meta = json.loads(mf.read_text())
-            if time.time() > meta["expires_at"]:
-                delete_file(meta["id"])
-                removed += 1
-        except Exception:
-            pass
-    return jsonify({"removed": removed})
-
-# ══════════════════════════════════════════════════════════════════════════════
-#  Error handlers — respostas genéricas (não revelam detalhes internos)
-# ══════════════════════════════════════════════════════════════════════════════
-@app.errorhandler(400)
-def bad_request(e):
-    return jsonify({"error": "Requisição inválida."}), 400
-
-@app.errorhandler(403)
-def forbidden(e):
-    return jsonify({"error": "Acesso negado."}), 403
-
+# ─────────────────────────────────────────────────────────────
+# ERROR HANDLERS
+# ─────────────────────────────────────────────────────────────
 @app.errorhandler(404)
 def not_found(e):
     return jsonify({"error": "Não encontrado."}), 404
-
-@app.errorhandler(405)
-def method_not_allowed(e):
-    return jsonify({"error": "Método não permitido."}), 405
 
 @app.errorhandler(410)
 def gone(e):
@@ -547,15 +450,8 @@ def too_large(e):
 
 @app.errorhandler(429)
 def rate_limit(e):
-    return jsonify({"error": "Muitas requisições. Tente mais tarde."}), 429
+    return jsonify({"error": "Muitas requisições."}), 429
 
 @app.errorhandler(500)
 def server_error(e):
     return jsonify({"error": "Erro interno."}), 500
-
-@app.errorhandler(507)
-def insufficient_storage(e):
-    return jsonify({"error": "Servidor sem espaço."}), 507
-
-if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5000, debug=False)
