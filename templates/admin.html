@@ -1,0 +1,231 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DROP — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0a0a0b;--surface:#111114;--border:#222228;--accent:#e8ff47;--accent2:#47c6ff;--text:#e4e4e8;--muted:#5a5a68;--danger:#ff4747;--success:#1aff8c}
+    html,body{background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;font-size:13px}
+    body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:40px 40px;opacity:.3}
+    /* layout */
+    .shell{position:relative;z-index:1;max-width:1100px;margin:0 auto;padding:2rem 1.5rem}
+    .topbar{display:flex;align-items:center;justify-content:space-between;margin-bottom:2rem;flex-wrap:wrap;gap:1rem}
+    .topbar h1{font-family:'Syne',sans-serif;font-size:2rem;font-weight:800;color:var(--accent);letter-spacing:-.04em}
+    .topbar-right{display:flex;gap:.5rem;align-items:center}
+    .btn-sm{background:none;border:1px solid var(--border);color:var(--muted);font-family:'Space Mono',monospace;font-size:.65rem;letter-spacing:.1em;text-transform:uppercase;padding:.4rem .85rem;cursor:pointer;text-decoration:none;transition:border-color .15s,color .15s}
+    .btn-sm:hover{border-color:var(--text);color:var(--text)}
+    .btn-sm.danger:hover{border-color:var(--danger);color:var(--danger)}
+    .btn-sm.accent{background:var(--accent);color:#000;border-color:var(--accent)}
+    /* stats */
+    .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:1rem;margin-bottom:2rem}
+    .stat{background:var(--surface);border:1px solid var(--border);padding:1.25rem;position:relative}
+    .stat::before{content:"";position:absolute;top:0;left:0;right:0;height:2px}
+    .stat.s1::before{background:var(--accent)}
+    .stat.s2::before{background:var(--accent2)}
+    .stat.s3::before{background:var(--danger)}
+    .stat.s4::before{background:var(--success)}
+    .stat-label{font-size:.6rem;color:var(--muted);letter-spacing:.15em;text-transform:uppercase;margin-bottom:.5rem}
+    .stat-value{font-family:'Syne',sans-serif;font-size:1.8rem;font-weight:800;color:var(--text)}
+    /* api token */
+    .api-box{background:var(--surface);border:1px solid var(--border);padding:1.25rem 1.5rem;margin-bottom:2rem;position:relative}
+    .api-box::before{content:"// API TOKEN";position:absolute;top:-1px;left:1rem;background:var(--accent2);color:#000;font-size:.6rem;font-weight:700;letter-spacing:.15em;padding:2px 6px}
+    .api-row{display:flex;margin-top:.75rem}
+    .api-input{flex:1;background:var(--bg);border:1px solid var(--border);border-right:none;color:var(--accent2);font-family:'Space Mono',monospace;font-size:.8rem;padding:.6rem .85rem;outline:none}
+    .api-copy{background:var(--border);border:1px solid var(--border);color:var(--text);font-family:'Space Mono',monospace;font-size:.7rem;padding:.6rem .85rem;cursor:pointer;white-space:nowrap;transition:background .15s}
+    .api-copy:hover{background:var(--accent);color:#000}
+    .api-copy.copied{background:var(--success);color:#000}
+    .api-hint{font-size:.65rem;color:var(--muted);margin-top:.6rem;line-height:1.6}
+    .api-hint code{color:var(--accent2);background:rgba(71,198,255,.08);padding:1px 4px}
+    /* section */
+    .section-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:.75rem}
+    .section-title{font-size:.7rem;color:var(--muted);letter-spacing:.15em;text-transform:uppercase}
+    /* table */
+    .table-wrap{overflow-x:auto;margin-bottom:2rem}
+    table{width:100%;border-collapse:collapse}
+    thead th{text-align:left;font-size:.6rem;color:var(--muted);letter-spacing:.12em;text-transform:uppercase;padding:.5rem .75rem;border-bottom:1px solid var(--border);white-space:nowrap}
+    tbody tr{border-bottom:1px solid rgba(255,255,255,.04);transition:background .1s}
+    tbody tr:hover{background:rgba(255,255,255,.02)}
+    tbody tr.expired-row{opacity:.5}
+    td{padding:.6rem .75rem;font-size:.78rem;vertical-align:middle}
+    td.fname{color:var(--accent2);max-width:220px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    td.fsize{color:var(--muted);white-space:nowrap}
+    td.fexp{white-space:nowrap}
+    td.fdl{text-align:center}
+    td.fact{text-align:right;white-space:nowrap}
+    .badge{display:inline-block;font-size:.6rem;padding:2px 7px;letter-spacing:.1em;text-transform:uppercase}
+    .badge.active{background:rgba(26,255,140,.12);color:var(--success);border:1px solid rgba(26,255,140,.2)}
+    .badge.expired{background:rgba(255,71,71,.1);color:var(--danger);border:1px solid rgba(255,71,71,.2)}
+    .badge.pw{background:rgba(71,198,255,.1);color:var(--accent2);border:1px solid rgba(71,198,255,.2)}
+    .badge.img{background:rgba(232,255,71,.1);color:var(--accent);border:1px solid rgba(232,255,71,.2)}
+    .link-btn{background:none;border:1px solid var(--border);color:var(--muted);font-family:'Space Mono',monospace;font-size:.6rem;padding:3px 8px;cursor:pointer;text-decoration:none;transition:all .15s;white-space:nowrap;display:inline-block}
+    .link-btn:hover{border-color:var(--accent2);color:var(--accent2)}
+    .del-btn{background:none;border:1px solid var(--border);color:var(--muted);font-family:'Space Mono',monospace;font-size:.6rem;padding:3px 8px;cursor:pointer;transition:all .15s}
+    .del-btn:hover{border-color:var(--danger);color:var(--danger);background:rgba(255,71,71,.06)}
+    /* empty */
+    .empty{text-align:center;padding:2rem;color:var(--muted);font-size:.8rem;border:1px dashed var(--border)}
+    /* toast */
+    .toast{position:fixed;bottom:1.5rem;right:1.5rem;z-index:1000;background:var(--surface);border:1px solid var(--success);color:var(--success);padding:.75rem 1.25rem;font-size:.75rem;opacity:0;transform:translateY(8px);transition:all .3s;pointer-events:none}
+    .toast.show{opacity:1;transform:none}
+  </style>
+</head>
+<body>
+<div class="shell">
+  <div class="topbar">
+    <h1>⚙ Admin</h1>
+    <div class="topbar-right">
+      <a href="/" class="btn-sm">↩ Upload</a>
+      <form action="/logout" method="POST" style="display:inline">
+        <button class="btn-sm danger" type="submit">Sair ✕</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Stats -->
+  <div class="stats">
+    <div class="stat s1">
+      <div class="stat-label">Ativos</div>
+      <div class="stat-value">{{ active|length }}</div>
+    </div>
+    <div class="stat s2">
+      <div class="stat-label">Total arquivos</div>
+      <div class="stat-value">{{ files|length }}</div>
+    </div>
+    <div class="stat s3">
+      <div class="stat-label">Expirados</div>
+      <div class="stat-value">{{ expired|length }}</div>
+    </div>
+    <div class="stat s4">
+      <div class="stat-label">Disco usado</div>
+      <div class="stat-value" style="font-size:1.2rem;padding-top:.3rem">{{ total_size }}</div>
+    </div>
+  </div>
+
+  <!-- API Token -->
+  <div class="api-box">
+    <div class="api-row">
+      <input class="api-input" id="apiInput" type="text" value="{{ api_token }}" readonly/>
+      <button class="api-copy" id="apiCopy">Copiar</button>
+    </div>
+    <p class="api-hint">
+      Upload via curl: <code>curl -X POST https://SEU_DOMINIO/api/upload -H "Authorization: Bearer TOKEN" -F "file=@arquivo.zip" -F "expiry=24h"</code>
+    </p>
+  </div>
+
+  <!-- Arquivos ativos -->
+  <div class="section-header">
+    <span class="section-title">Arquivos ativos ({{ active|length }})</span>
+    {% if expired %}
+    <button class="btn-sm danger" id="cleanExpiredBtn">🗑 Limpar expirados</button>
+    {% endif %}
+  </div>
+
+  <div class="table-wrap">
+    {% if active %}
+    <table>
+      <thead>
+        <tr>
+          <th>Arquivo</th>
+          <th>Tamanho</th>
+          <th>Expira em</th>
+          <th>DL</th>
+          <th>Badges</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {% for f in active %}
+        <tr id="row-{{ f.id }}">
+          <td class="fname" title="{{ f.name }}">{{ f.name }}</td>
+          <td class="fsize">{{ f.size_human }}</td>
+          <td class="fexp">{{ f.expires_in }}</td>
+          <td class="fdl">{{ f.downloads }}</td>
+          <td>
+            <span class="badge active">ativo</span>
+            {% if f.password_hash %}<span class="badge pw">🔒 senha</span>{% endif %}
+            {% if f.is_image %}<span class="badge img">🖼 img</span>{% endif %}
+          </td>
+          <td class="fact">
+            <a class="link-btn" href="/d/{{ f.id }}" target="_blank">Ver link</a>
+            <button class="del-btn" data-id="{{ f.id }}">✕ Deletar</button>
+          </td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+    {% else %}
+    <div class="empty">Nenhum arquivo ativo no momento.</div>
+    {% endif %}
+  </div>
+
+  <!-- Arquivos expirados -->
+  {% if expired %}
+  <div class="section-header">
+    <span class="section-title">Expirados ({{ expired|length }})</span>
+  </div>
+  <div class="table-wrap">
+    <table>
+      <thead>
+        <tr><th>Arquivo</th><th>Tamanho</th><th>Status</th><th>DL</th><th></th></tr>
+      </thead>
+      <tbody>
+        {% for f in expired %}
+        <tr class="expired-row" id="row-{{ f.id }}">
+          <td class="fname" title="{{ f.name }}">{{ f.name }}</td>
+          <td class="fsize">{{ f.size_human }}</td>
+          <td><span class="badge expired">expirado</span></td>
+          <td class="fdl">{{ f.downloads }}</td>
+          <td class="fact"><button class="del-btn" data-id="{{ f.id }}">✕ Deletar</button></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+  {% endif %}
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script nonce="{{ csp_nonce }}">
+  function showToast(msg, color="#1aff8c"){
+    const t=document.getElementById("toast");
+    t.textContent=msg;t.style.borderColor=color;t.style.color=color;
+    t.classList.add("show");setTimeout(()=>t.classList.remove("show"),2500);
+  }
+
+  // delete individual
+  document.querySelectorAll(".del-btn").forEach(btn=>{
+    btn.addEventListener("click",async()=>{
+      const id=btn.dataset.id;
+      if(!confirm("Deletar este arquivo?"))return;
+      const res=await fetch(`/admin/delete/${id}`,{method:"POST"});
+      if(res.ok){
+        document.getElementById(`row-${id}`)?.remove();
+        showToast("Arquivo deletado.");
+      } else showToast("Erro ao deletar.","#ff4747");
+    });
+  });
+
+  // clean expired
+  document.getElementById("cleanExpiredBtn")?.addEventListener("click",async()=>{
+    if(!confirm("Deletar todos os arquivos expirados?"))return;
+    const res=await fetch("/admin/delete-expired",{method:"POST"});
+    const d=await res.json();
+    if(d.ok){showToast(`${d.removed} arquivo(s) removido(s).`);setTimeout(()=>location.reload(),1500);}
+    else showToast("Erro.","#ff4747");
+  });
+
+  // copy api token
+  document.getElementById("apiCopy")?.addEventListener("click",()=>{
+    navigator.clipboard.writeText(document.getElementById("apiInput").value).then(()=>{
+      const b=document.getElementById("apiCopy");
+      b.textContent="Copiado ✓";b.classList.add("copied");
+      setTimeout(()=>{b.textContent="Copiar";b.classList.remove("copied")},2000);
+    });
+  });
+</script>
+</body>
+</html>

@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DROP — Admin</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+  <style>
+    *,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+    :root{--bg:#0a0a0b;--surface:#111114;--border:#222228;--accent:#e8ff47;--text:#e4e4e8;--muted:#5a5a68;--danger:#ff4747}
+    html,body{height:100%;background:var(--bg);color:var(--text);font-family:'Space Mono',monospace;font-size:14px}
+    body::before{content:"";position:fixed;inset:0;z-index:999;pointer-events:none;background:repeating-linear-gradient(0deg,transparent,transparent 2px,rgba(0,0,0,.07) 2px,rgba(0,0,0,.07) 4px)}
+    body::after{content:"";position:fixed;inset:0;z-index:0;pointer-events:none;background-image:linear-gradient(var(--border) 1px,transparent 1px),linear-gradient(90deg,var(--border) 1px,transparent 1px);background-size:40px 40px;opacity:.4}
+    .wrap{position:relative;z-index:1;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:2rem 1rem;gap:2rem}
+    header{text-align:center}
+    h1{font-family:'Syne',sans-serif;font-size:clamp(3rem,10vw,6rem);font-weight:800;letter-spacing:-.04em;color:var(--accent);text-shadow:0 0 60px rgba(232,255,71,.25)}
+    header p{margin-top:.5rem;color:var(--muted);font-size:.7rem;letter-spacing:.15em;text-transform:uppercase}
+    .box{width:100%;max-width:360px;background:var(--surface);border:1px solid var(--border);padding:2.5rem 2rem;display:flex;flex-direction:column;gap:1.25rem;position:relative}
+    .box::before{content:"// ACESSO ADMIN";position:absolute;top:-1px;left:1.5rem;background:var(--danger);color:#fff;font-size:.65rem;font-weight:700;letter-spacing:.15em;padding:2px 8px}
+    label{font-size:.65rem;color:var(--muted);letter-spacing:.12em;text-transform:uppercase}
+    .pw-row{display:flex}
+    .pw-input{flex:1;background:var(--bg);border:1px solid var(--border);border-right:none;color:var(--text);font-family:'Space Mono',monospace;font-size:1rem;padding:.75rem 1rem;outline:none;transition:border-color .2s}
+    .pw-input:focus{border-color:var(--accent)}
+    .pw-input.error{border-color:var(--danger);animation:shake .3s ease}
+    @keyframes shake{0%,100%{transform:translateX(0)}25%{transform:translateX(-6px)}75%{transform:translateX(6px)}}
+    .btn{padding:.85rem;background:var(--accent);color:#000;font-family:'Syne',sans-serif;font-size:1rem;font-weight:800;letter-spacing:.06em;text-transform:uppercase;border:none;cursor:pointer;transition:box-shadow .2s}
+    .btn:hover{box-shadow:0 0 24px rgba(232,255,71,.4)}
+    .btn .spinner{display:none;width:16px;height:16px;margin:0 auto;border:2px solid rgba(0,0,0,.3);border-top-color:#000;border-radius:50%;animation:spin .6s linear infinite}
+    .btn.loading .btn-text{display:none}
+    .btn.loading .spinner{display:block}
+    @keyframes spin{to{transform:rotate(360deg)}}
+    .error-msg{display:none;color:var(--danger);font-size:.75rem}
+    .error-msg.show{display:block}
+    footer{position:relative;z-index:1;color:var(--muted);font-size:.65rem;letter-spacing:.12em;text-transform:uppercase}
+    footer a{color:var(--accent);text-decoration:none}
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>DROP</h1>
+    <p>painel restrito</p>
+  </header>
+
+  <div class="box">
+    <label>Senha do admin</label>
+    <div class="pw-row">
+      <input class="pw-input" id="pwInput" type="password" placeholder="••••••••" autofocus/>
+    </div>
+    <span class="error-msg" id="errorMsg">Senha incorreta.</span>
+    <button class="btn" id="loginBtn">
+      <span class="btn-text">Entrar</span>
+      <div class="spinner"></div>
+    </button>
+  </div>
+
+  <footer><a href="/">← voltar ao upload</a></footer>
+</div>
+
+<script nonce="{{ csp_nonce }}">
+  const pwInput  = document.getElementById("pwInput");
+  const loginBtn = document.getElementById("loginBtn");
+  const errorMsg = document.getElementById("errorMsg");
+
+  pwInput.addEventListener("keydown", e => { if(e.key==="Enter") doLogin(); });
+  loginBtn.addEventListener("click", doLogin);
+
+  async function doLogin(){
+    const pw = pwInput.value.trim();
+    if(!pw) return;
+
+    loginBtn.classList.add("loading");
+    loginBtn.disabled = true;
+    errorMsg.classList.remove("show");
+    pwInput.classList.remove("error");
+
+    try {
+      const res = await fetch("/admin/auth", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({password: pw}),
+      });
+      const d = await res.json();
+      if(res.ok && d.ok){
+        window.location.href = "/admin";
+      } else {
+        pwInput.classList.add("error");
+        errorMsg.classList.add("show");
+        pwInput.value = "";
+        pwInput.focus();
+      }
+    } catch {
+      errorMsg.textContent = "Erro de conexão.";
+      errorMsg.classList.add("show");
+    } finally {
+      loginBtn.classList.remove("loading");
+      loginBtn.disabled = false;
+    }
+  }
+</script>
+</body>
+</html>

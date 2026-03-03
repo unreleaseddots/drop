@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>DROP — arquivo expirado</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com"/>
+  <link href="https://fonts.googleapis.com/css2?family=Space+Mono:wght@400;700&family=Syne:wght@800&display=swap" rel="stylesheet"/>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root { --bg: #0a0a0b; --surface: #111114; --border: #222228; --accent: #e8ff47; --muted: #5a5a68; --danger: #ff4747; --text: #e4e4e8; }
+    html, body { height: 100%; background: var(--bg); color: var(--text); font-family: 'Space Mono', monospace; font-size: 14px; }
+    body::before { content: ""; position: fixed; inset: 0; z-index: 999; pointer-events: none; background: repeating-linear-gradient(0deg, transparent, transparent 2px, rgba(0,0,0,.07) 2px, rgba(0,0,0,.07) 4px); }
+    body::after { content: ""; position: fixed; inset: 0; z-index: 0; pointer-events: none; background-image: linear-gradient(var(--border) 1px, transparent 1px), linear-gradient(90deg, var(--border) 1px, transparent 1px); background-size: 40px 40px; opacity: .4; }
+    .wrap { position: relative; z-index: 1; min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 2rem 1rem; gap: 2rem; }
+    h1 { font-family: 'Syne', sans-serif; font-size: clamp(3rem, 10vw, 6rem); font-weight: 800; letter-spacing: -.04em; color: var(--danger); text-shadow: 0 0 60px rgba(255,71,71,.25); }
+    .card { width: 100%; max-width: 420px; background: var(--surface); border: 1px solid var(--danger); padding: 2.5rem 2rem; text-align: center; display: flex; flex-direction: column; gap: 1rem; position: relative; }
+    .card::before { content: "// EXPIRADO"; position: absolute; top: -1px; left: 1.5rem; background: var(--danger); color: #fff; font-size: .65rem; font-weight: 700; letter-spacing: .15em; padding: 2px 8px; }
+    .icon { font-size: 3rem; }
+    p { color: var(--muted); font-size: .8rem; line-height: 1.7; }
+    p strong { color: var(--text); }
+    footer { position: relative; z-index: 1; color: var(--muted); font-size: .65rem; letter-spacing: .12em; text-transform: uppercase; }
+    footer a { color: var(--accent); text-decoration: none; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+  <h1>DROP</h1>
+  <div class="card">
+    <div class="icon">🗑️</div>
+    <p><strong>Este arquivo não existe mais.</strong><br>Os arquivos são deletados automaticamente após <strong>24 horas</strong>. Nenhum dado foi mantido.</p>
+  </div>
+  <footer><a href="/">← voltar</a></footer>
+</div>
+</body>
+</html>
